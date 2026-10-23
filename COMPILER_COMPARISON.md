@@ -136,15 +136,21 @@ All of these build with no `sorry`. They depend only on `propext`, `Classical.ch
 ## 7. Places where the compiler's checker accepts more than the paper
 
 These are differences between the code and the paper. None of them means our grammar is wrong.
-They are suspected problems in the compiler, found by reading the code and **not confirmed
-by running it**.
+
+> **Update: all four problems are now confirmed and fixed.** Each was reproduced by running the compiler's
+> `rename.rs`, `infer.rs` and `core.rs` on syntax trees, using the harness in `compiler-fixes/harness`.
+> One prediction below was slightly off: `case ~x of y -> dup ~x` did not panic but was
+> translated to `dup ()`. The fixes are in `compiler-fixes/flow-typing-compiler.patch`, and
+> `create_files.py` now generates the fixed sources. See `compiler-fixes/README.md`. The text below
+> describes the original compiler.
 
 1. **Lens scrutinees and lens tuples thread the context instead of splitting it.** The rules
    `~⊗-I`, `~Let`, `~⊗-E` and `~⊕-E` split the input context, `Γ₁, Γ₃`. `infer_lens` and
    `infer_expr` instead thread one context through the scrutinee and then the body (or through
    one tuple component and then the next). So the checker accepts `~(x, x)`, and
    `case ~x of y -> … x …`, where the body uses `x` while `y` is a view of it. The paper
-   rejects both (`LensTy.not_pair_same_var` for the first). In `core.rs` the translation *does*
+   rejects both (`LensTy.not_pair_same_var` for the first; `LinTy.not_letInLens_reuse_var` and
+   `LinTy.not_caseLens_reuse_var` for the second). In `core.rs` the translation *does*
    split the context, by the free variables of the scrutinee (`Ctx::corestrict`):
    * For the `case` example, translating the body's use of `x` reaches
      `expect("variable not live!")`, so the compiler should panic instead of reporting an error.

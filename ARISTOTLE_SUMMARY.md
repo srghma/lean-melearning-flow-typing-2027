@@ -1,32 +1,30 @@
-# Summary of changes for run 5532afc0-823d-4cec-b570-243a6a283227
-Our Lean grammar for `λF` is correct with respect to the paper. `LinTm`, `LensTm` and `Tm` match Fig. 4 constructor for constructor, and the typing rules match Appendix A. Comparing it with the compiler found nothing that needs to change on the Lean side. The full write-up is in `COMPILER_COMPARISON.md`.
+# Summary of changes for run 78fed132-f3ab-4aae-8199-3df816867df6
+I took "fix it" to mean the four compiler bugs suspected in the last report. All four are now confirmed and fixed. I couldn't build the full compiler or compile its Haskell output, though, because crates.io and GHC weren't available here.
 
-I compared by reading the compiler's Rust source. I did not build or run it, because its crate dependencies could not be downloaded here. So everything below about how the compiler behaves comes from reading the code; only the Lean results are machine-checked.
+**How I tested.** The compiler's lexer and parser need packages from crates.io, so I wrote a small test program in `compiler-fixes/harness/`. Each test is a program written directly as a parsed syntax tree, which then goes through the compiler's real `rename.rs`, `infer.rs` and `core.rs`. There are 15 tests:
+- With the original sources, 6 fail. That confirms all four bugs.
+- With the fixed sources, all 15 pass.
+- The 7 regression tests cover the programs from `examples.fl` listed in `compiler-fixes/README.md`. Their translations match the shipped `flow/Examples.hs`, and `badFileUsage` is still rejected.
 
-**What matches**
-- **Binders:** the compiler uses de Bruijn indices with the same convention as ours: the most recent binder is index 0, and a tuple pattern `(x, y)` binds `y = 0`, `x = 1`.
-- **Type translation:** the compiler maps flow function types to Haskell types exactly as our `PTy.circ` does.
-- **Rules:** every `λF` construct the compiler implements is one of our constructors, with the same evaluation order. This covers variables (live and dead), `:=`, both kinds of application, both kinds of lambda, tuples, let / pattern binding with plain or `~` scrutinee, `Left`/`Right`, and `case` / `case ~`.
+I checked the generated Haskell by reading it, not by compiling it.
 
-**Where they differ**
-- **Missing from the compiler:** `lens x ← t₁ in t₂`, `unlens`, let/case with a lens body, and `0`, `&`, `⊤`, `!`. Our grammar still needs the lens-bodied binders: a flow parameter like `fst ~(x, y) = ~x` means `λz. let (x, y) = ~z in ~x`.
-- **Added by the compiler:** base types, lists, general recursion, polymorphic reusable top-level definitions, nested patterns that need not cover every case, and literal lenses. Our type-safety result says nothing about recursive or partial programs.
+**What was wrong and how it's fixed** (only `src/infer.rs` and `src/core.rs` change):
+1. **Context not split.** The paper splits the context for lens tuples and for `~` scrutinees; the compiler didn't.
+   - `~(x, x)` was accepted and produced ill-typed Haskell. Now a variable may appear in only one part of a lens tuple.
+   - In `case ~u of …` and `let p = ~u in …`, the body could use the variables of `u`. The `case` form produced `dup ()`, and the `let` form crashed the compiler. (The earlier report predicted a crash for `case` too; it actually produced bad output instead.) Now this is a type error.
+2. **Captured variables left live.** `\~y -> ~x`, with `x` captured, was accepted, and the output contained an unsolved type variable `?7`. Now every variable a lambda captures must be used up by the end of its body.
+3. **Wrong translation of a lens application with a plain argument.** A function of type `A ⊸ B/B'` applied to a plain argument, used as a lens, produced `(ab, Γ₃)` and applied the leftover function to `()`. It now produces `(ab, \bp -> ares bp; Γ₃)`, of type \(B \otimes (B' \multimap \Gamma_3)\).
+4. **Crashes on accepted programs.** `let p = ~u in t` passed the type checker but crashed the translator. It is now translated as a one-branch `case ~u of p -> t`. Literal lenses such as `inc ~3` also crashed the translator; they are now a type error, since the paper has no rule for them.
 
-**Checked in Lean** (new file `RequestProject/FlowTyping/CompilerExamples.lean`; it builds with no `sorry` and uses only Lean's standard axioms)
-- Six programs from `examples.fl` typecheck in our `λF` at the types declared there: `swap`, `swapPair`, `united`, `map`, `unmap` and `fcomp`.
-- `LensTy.not_pair_same_var`: the lens tuple `~(x, x)` has no typing in any context.
-- `LinTy.not_lamSlash_capture_lens`: `λy : A/A'. ~x`, with `x` captured from outside, has no typing.
+**Files**
+- `compiler-fixes/flow-typing-compiler.patch`: the diff against the original sources.
+- `create_files.py` now generates the fixed `infer.rs` and `core.rs`; every other generated file is unchanged.
+- `compiler-fixes/regressions.fl`: the test programs in surface syntax, for running with the real compiler.
+- `compiler-fixes/README.md`: details and before/after outputs.
+- I updated `COMPILER_COMPARISON.md` §7 and `README.md`.
 
-**Likely problems in the compiler** (found by reading the code, not confirmed by running it)
-1. Its type checker threads the context through lens tuples and `~` scrutinees, where the paper splits it. So it appears to accept `~(x, x)` and `case ~x of y -> … x …`. Its translation step does split the context, so the first probably produces ill-typed Haskell and the second should crash the compiler rather than give an error.
-2. Flow lambdas are never checked to leave captured variables dead (plain lambdas are), so `\~y -> ~x` appears to be accepted.
-3. Calling a function that returns a flow type with a plain argument, in lens position, seems to be translated to a pair of the wrong form. `examples.fl` never does this, so the shipped `Examples.hs` is not affected.
-4. `let p = ~u in …` and literal lenses pass the type checker but hit `out_of_scope!()`, which crashes the compiler.
+**Lean.** I added two theorems to `RequestProject/FlowTyping/CompilerExamples.lean`:
+- `LinTy.not_letInLens_reuse_var`: `let y = ~x in x` can't be typed.
+- `LinTy.not_caseLens_reuse_var`: the same for `case ~x of …` when a branch uses `x`.
 
-One minor note on our side: for lens terms, Fig. 4 writes `false_A(s)` with a plain type, while Appendix A types it as `false_T` where `T` may be `A/A'`. Our `LensTm.falseE` follows Fig. 4. The paper as written allows this.
-
-I also updated `README.md` and added three rows to the Properties table, all marked proved. The work is committed and pushed, and the new files are published.
-
-## Suggested follow-up
-
-From reading the compiler source, I suspect three bugs. First, `infer.rs` doesn't split the context for lens tuples and `~` scrutinees. Second, the flow-lambda branches in `core.rs` never check that captured variables end up dead. Third, in `translate_lens`, the case for an application with a plain argument builds `(B, Γ₃)` instead of `(B, B' ⊸ Γ₃)`. I haven't run the compiler to confirm any of these. If you'd like, I can draft fixes or small `.fl` test cases for them.
+Together with the existing `not_pair_same_var` and `not_lamSlash_capture_lens`, there is now a theorem behind each type-checker fix. The project builds with no `sorry`, and the new theorems use only the `propext` axiom. I added one row for them to the Properties table, marked proved, and updated the comments on the two existing compiler rows. Everything is committed and pushed.

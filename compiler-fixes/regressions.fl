@@ -1,0 +1,70 @@
+-- Test programs for the fixes in `flow-typing-compiler.patch`, in the compiler's surface syntax.
+-- The same programs are encoded as syntax trees in `harness/src/main.rs`, which is how
+-- they were run (the real parser could not be built offline).
+-- Paste a block into `examples.fl` to try it with the full compiler.
+
+--------------------
+-- Must be REJECTED by the type checker
+--------------------
+
+-- 1a. A lens tuple may not use a variable in two components (rule ~(x)-I splits the context).
+--     Before the fix: accepted, and translated to ill-typed Haskell `((x, ()), ...)`.
+dupl :: ~a -> ~(a, a)
+dupl ~x = ~(x, x)
+
+-- 1b. The body of `case ~u` / `let p = ~u` may not use the variables of `u`
+--     (rules ~(+)-E, ~Let and ~(x)-E split the context).
+--     Before the fix: the `case` version was accepted and translated to `dup ()`;
+--     the `let` version crashed the compiler.
+badCase :: ~Int -> Int
+badCase ~x = case ~x of
+  y -> dup ~x
+
+badLet :: ~Int -> Int
+badLet ~x =
+  let y = ~x
+  dup ~x
+
+-- 2. A lambda (here a flow lambda) must leave the variables it captures dead
+--    (rule ~(-o)-I).
+--    Before the fix: accepted, and translated to Haskell with an unsolved type variable `?7`.
+badCapture :: ~a -> ~() -> ~a
+badCapture ~x = \~y -> ~x
+
+-- 4b. A literal is not a lens term.
+--     Before the fix: accepted by the type checker, then the translation crashed.
+inc :: ~Int -> ()
+inc ~x = x := x + 1
+
+badLiteral :: ()
+badLiteral = inc ~3
+
+--------------------
+-- Must be ACCEPTED, with correct Haskell output
+--------------------
+
+-- 3. A function with a flow result applied to a plain argument, used as a lens.
+--    Before the fix: translated to `(ab, ())` with `ares ()`, which is ill-typed.
+--    Now: useFocus = \n -> case focus n of (ab, ares) -> (ab, \bp -> case ares bp of () -> ())
+focus :: Int -> ~Int
+
+useFocus :: Int -> ~Int
+useFocus n = ~(focus n)
+
+incFocus :: Int -> Int
+incFocus n = focus n := 3
+
+-- 4a. `let p = ~u in t`.
+--     Before the fix: the translation crashed.
+--     Now: swapl = \z -> case z of (x, y) -> ((), (y, x))
+swapl :: (a, b)/(b, a) -> ()
+swapl ~z =
+  let (x, y) = ~z
+  y := x := y
+
+-- Unchanged: lambdas that capture nothing, and lens tuples with distinct variables.
+ok :: ~a -> ~() -> ()
+ok ~x = \~y -> ()
+
+swap :: (a,b)/(c,d) -> (b,a)/(d,c)
+swap ~(x, y) = ~(y, x)

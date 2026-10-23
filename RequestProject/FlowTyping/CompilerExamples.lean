@@ -19,7 +19,10 @@ We also prove that two kinds of term are rejected by the rules of the paper (and
 our formalisation):
 * `LensTy.not_pair_same_var`: the lens tuple `~(x, x)` never typechecks (`~⊗-I` splits the context);
 * `LinTy.not_lamSlash_capture_lens`: a flow function `λy : A/A'. ~x` that leaves the variable
-  `x` it captured live never typechecks (`~⊸-I` requires captured variables to end dead).
+  `x` it captured live never typechecks (`~⊸-I` requires captured variables to end dead);
+* `LinTy.not_letInLens_reuse_var`, `LinTy.not_caseLens_reuse_var`: `let y = ~x in x` and
+  `case ~x of {inl y → x; inr z → x}` never typecheck (`~Let` and `~⊕-E` split the context
+  between the scrutinee and the body).
 -/
 
 @[expose] public section
@@ -250,6 +253,42 @@ theorem LinTy.not_lamSlash_capture_lens {n : ℕ} {Γ Δ : FCtx n} {j : Fin n} {
         have := congrFun hO j.succ
         simp only [Fin.cons_succ, Function.update_self, FCtx.dag] at this
         cases hj : Γ₂ j <;> simp [hj, FEntry.dag] at this
+
+/-- A linear use of a variable requires it to be live in the input context. -/
+private theorem LinTy.var_live_of {n : ℕ} {Γ Δ : FCtx n} {t : LinTm n} {A : PTy}
+    (h : LinTy Γ t A Δ) {j : Fin n} (hj : t = .var j) : Γ j = .live A := by
+  cases h <;> cases hj
+  assumption
+
+/-- A lens on a variable requires it to be present (live or dead) in the input context. -/
+private theorem LensTy.var_present_of {n : ℕ} {Γ Δ : FCtx n} {u : LensTm n} {A A' : PTy}
+    (h : LensTy Γ u A A' Δ) {j : Fin n} (hj : u = .var j) : Γ j ≠ .absent := by
+  cases h <;> cases hj <;> simp_all
+
+/-- `let y = ~x in x` never typechecks: the rule `~Let` splits the input context between the
+lens scrutinee and the body, so the body cannot use the variable `x` that the scrutinee uses. -/
+theorem LinTy.not_letInLens_reuse_var {n : ℕ} {Γ Δ : FCtx n} {i : Fin n} {B : PTy} :
+    ¬ LinTy Γ (.letIn (.lens (.var i)) (.var i.succ)) B Δ := by
+  intro h
+  cases h with
+  | letInLens hs hu ht _ =>
+    have h₁ := hu.var_present_of rfl
+    have h₂ := ht.var_live_of rfl
+    simp only [Fin.cons_succ] at h₂
+    rcases hs i with ⟨e, _⟩ | ⟨e, _⟩ <;> simp_all
+
+/-- `case ~x of {inl y → x; inr z → x}` never typechecks: the rule `~⊕-E` splits the input
+context between the lens scrutinee and the branches, so a branch cannot use the variable `x`
+that the scrutinee uses. -/
+theorem LinTy.not_caseLens_reuse_var {n : ℕ} {Γ Δ : FCtx n} {i : Fin n} {C : PTy} :
+    ¬ LinTy Γ (.case (.lens (.var i)) (.var i.succ) (.var i.succ)) C Δ := by
+  intro h
+  cases h with
+  | caseLens hs hu ht _ _ =>
+    have h₁ := hu.var_present_of rfl
+    have h₂ := ht.var_live_of rfl
+    simp only [Fin.cons_succ] at h₂
+    rcases hs i with ⟨e, _⟩ | ⟨e, _⟩ <;> simp_all
 
 end LambdaF
 

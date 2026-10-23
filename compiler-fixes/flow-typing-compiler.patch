@@ -1,0 +1,352 @@
+diff -ru a/src/core.rs b/src/core.rs
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -282,8 +282,19 @@
+                     }
+                 })
+             }
+-            infer::ExprOrLens::Lens(_) => {
+-                out_of_scope!()
++            infer::ExprOrLens::Lens(value) => {
++                // `let p = ~u in t` is a `case ~u of p -> t` with a single branch
++                // (rules ~Let and ~(x)-E), so reuse the translation of rule ~(+)-E.
++                translate_expr(
++                    errors,
++                    ctx,
++                    ng,
++                    infer::Expr::Case {
++                        scrutinee: Box::new(infer::ExprOrLens::Lens(value)),
++                        branches: vec![(pattern, *body)],
++                        span,
++                    },
++                )
+             }
+         },
+         infer::Expr::Case {
+@@ -778,7 +789,10 @@
+                             // al : A -> (B, B' -> ())
+                             // ar : A
+                             let ab = ng.generate(); // type B
+-                            let ares = ng.generate(); // residual
++                            let ares = ng.generate(); // residual, type B' -> ()
++                            let bprime = ng.generate(); // type B'
++                            // The residual of the result must take the B' that is written
++                            // back, pass it on to `ares`, and then return Gamma_3.
+                             Expr::Let {
+                                 pattern: Pattern::Tuple(
+                                     vec![
+@@ -792,14 +806,28 @@
+                                     Box::new(Expr::Var(right_core, span.clone())),
+                                     span.clone(),
+                                 )),
+-                                body: Box::new(Expr::PrimOp(
+-                                    Box::new(Expr::App(
+-                                        Box::new(Expr::Var(ares, span.clone())),
+-                                        Box::new(Expr::Tuple(Vec::new(), span.clone())),
+-                                        span.clone(),
+-                                    )),
+-                                    Box::new(ctx.pack(span.clone(), Expr::Var(ab, span.clone()))),
+-                                    PrimOp::Seq,
++                                body: Box::new(Expr::Tuple(
++                                    vec![
++                                        Expr::Var(ab, span.clone()),
++                                        Expr::Lambda {
++                                            pattern: Pattern::Var(
++                                                bprime,
++                                                "bp".to_owned(),
++                                                span.clone(),
++                                            ),
++                                            body: Box::new(Expr::PrimOp(
++                                                Box::new(Expr::App(
++                                                    Box::new(Expr::Var(ares, span.clone())),
++                                                    Box::new(Expr::Var(bprime, span.clone())),
++                                                    span.clone(),
++                                                )),
++                                                Box::new(ctx.pack_simple(span.clone())),
++                                                PrimOp::Seq,
++                                                span.clone(),
++                                            )),
++                                            span: span.clone(),
++                                        },
++                                    ],
+                                     span.clone(),
+                                 )),
+                                 span,
+@@ -876,7 +904,9 @@
+                 }
+             }
+         }
+-        infer::Lens::Literal(_, _) => out_of_scope!(),
++        infer::Lens::Literal(_, _) => {
++            unreachable!("literal lenses are rejected by the type checker")
++        }
+     }
+ }
+ 
+diff -ru a/src/infer.rs b/src/infer.rs
+--- a/src/infer.rs
++++ b/src/infer.rs
+@@ -289,6 +289,13 @@
+             ctx.extend(&pattern);
+             let body = infer_expr(decls, errors, unify_errors, ctx, *body, expected)?;
+             ctx.retract(errors, unify_errors, &pattern);
++            if let IExprOrLens::Lens(lens) = &value {
++                let body_vars = body
++                    .fvars()
++                    .into_iter()
++                    .filter_map(|x| x.checked_sub(pattern.vars()));
++                check_scrutinee_split(errors, ctx, lens, body_vars);
++            }
+ 
+             Some(IExpr::Let {
+                 pattern,
+@@ -354,6 +361,19 @@
+                 new_branches.push((pat, branch))
+             }
+             ctx.vars = after_vars.expect("empty case not allowed");
++            if let IExprOrLens::Lens(lens) = &scrutinee {
++                let body_vars = new_branches
++                    .iter()
++                    .flat_map(|(pat, branch): &(IPattern, IExpr)| {
++                        branch
++                            .fvars()
++                            .into_iter()
++                            .filter_map(|x| x.checked_sub(pat.vars()))
++                            .collect::<Vec<_>>()
++                    })
++                    .collect::<Vec<_>>();
++                check_scrutinee_split(errors, ctx, lens, body_vars);
++            }
+ 
+             Some(IExpr::Case {
+                 scrutinee: Box::new(scrutinee),
+@@ -449,6 +469,31 @@
+                 ctx.retract(errors, unify_errors, pattern);
+             }
+ 
++            // Rules (-o)-I and ~(-o)-I: the variables captured by a lambda (plain or flow)
++            // are handed over to the closure and must be dead at the end of its body.
++            let pattern_vars = elab_patterns
++                .iter()
++                .map(|(_, pattern)| pattern.vars())
++                .sum::<usize>();
++            let mut captured = body
++                .fvars()
++                .into_iter()
++                .filter_map(|x| x.checked_sub(pattern_vars))
++                .collect::<Vec<_>>();
++            captured.sort();
++            captured.dedup();
++            for var in captured {
++                if let (var_span, Some(ty)) = &ctx.vars[var] {
++                    errors.push(Diagnostic::error(
++                        var_span.clone(),
++                        format!(
++                            "this variable is captured by a lambda, but still has type {} at the end of the lambda's body; variables captured by a lambda must be used up inside it",
++                            ctx.subst(ty.clone())
++                        ),
++                    ));
++                }
++            }
++
+             let result = elab_patterns
+                 .into_iter()
+                 .rev()
+@@ -578,20 +623,15 @@
+             Some(ILens::App(Box::new(left), Box::new(right), span))
+         }
+         rename::Expr::Assign(..) => out_of_scope!(),
+-        rename::Expr::Literal(literal, span) => {
+-            ctx.unify(
+-                unify_errors,
+-                span.clone(),
+-                expected1,
+-                literal_ty(&literal, span.clone()),
+-            );
+-            ctx.unify(
+-                unify_errors,
+-                span.clone(),
+-                expected2,
+-                literal_ty(&literal, span.clone()),
+-            );
+-            Some(ILens::Literal(literal, span.clone()))
++        rename::Expr::Literal(_, span) => {
++            // A literal is not a lens term: there is nowhere to put the value written back
++            // through it, so the paper's type system has no rule for it.
++            errors.push(Diagnostic::error(
++                span,
++                "a literal cannot be used as a lens term ('~' needs a variable, tuple or application)"
++                    .to_owned(),
++            ));
++            None
+         }
+         rename::Expr::PrimOp(..) => out_of_scope!(),
+         rename::Expr::Tuple(exprs, span) => {
+@@ -621,7 +661,25 @@
+                 .filter_map(|(expr, (ty1, ty2))| {
+                     infer_lens(decls, errors, unify_errors, ctx, expr, ty1, ty2)
+                 })
+-                .collect();
++                .collect::<Vec<_>>();
++            // The rule ~(x)-I splits the context between the components of a lens tuple,
++            // so no variable may be mentioned by more than one component.
++            let mut seen = Vec::<usize>::new();
++            for item in &exprs {
++                let mut vars = item.fvars();
++                vars.sort();
++                vars.dedup();
++                for var in vars {
++                    if seen.contains(&var) {
++                        errors.push(Diagnostic::error(
++                            item.span(),
++                            "variable used in more than one component of a lens tuple".to_owned(),
++                        ));
++                    } else {
++                        seen.push(var);
++                    }
++                }
++            }
+             Some(ILens::Tuple(exprs, span))
+         }
+         rename::Expr::EmptyList(_) => out_of_scope!(),
+@@ -877,6 +935,121 @@
+     Lens(ILens<'src>),
+ }
+ 
++impl<'src> IExprOrLens<'src> {
++    /// Possibly contains duplicates. A list of free variables.
++    fn fvars(&self) -> Vec<usize> {
++        match self {
++            IExprOrLens::Expr(expr) => expr.fvars(),
++            IExprOrLens::Lens(lens) => lens.fvars(),
++        }
++    }
++}
++
++impl<'src> IExpr<'src> {
++    /// Possibly contains duplicates. A list of free variables.
++    fn fvars(&self) -> Vec<usize> {
++        match self {
++            IExpr::Var(i, _) => vec![*i],
++            IExpr::Inst { .. } => Vec::new(),
++            IExpr::App(left, right, _) => left.fvars().into_iter().chain(right.fvars()).collect(),
++            IExpr::Assign(left, right, _) => {
++                left.fvars().into_iter().chain(right.fvars()).collect()
++            }
++            IExpr::Literal(_, _) => Vec::new(),
++            IExpr::PrimOp(left, right, _, _) => {
++                left.fvars().into_iter().chain(right.fvars()).collect()
++            }
++            IExpr::Tuple(exprs, _) => exprs.iter().flat_map(|expr| expr.fvars()).collect(),
++            IExpr::EmptyList(_) => Vec::new(),
++            IExpr::Cons(head, tail, _) => head.fvars().into_iter().chain(tail.fvars()).collect(),
++            IExpr::Case {
++                scrutinee,
++                branches,
++                ..
++            } => scrutinee
++                .fvars()
++                .into_iter()
++                .chain(branches.iter().flat_map(|(pat, branch)| {
++                    branch
++                        .fvars()
++                        .into_iter()
++                        .filter_map(|x| x.checked_sub(pat.vars()))
++                }))
++                .collect(),
++            IExpr::Let {
++                pattern,
++                value,
++                body,
++                ..
++            } => value
++                .fvars()
++                .into_iter()
++                .chain(
++                    body.fvars()
++                        .into_iter()
++                        .filter_map(|x| x.checked_sub(pattern.vars())),
++                )
++                .collect(),
++            IExpr::Lambda { pattern, body, .. } => body
++                .fvars()
++                .into_iter()
++                .filter_map(|x| x.checked_sub(pattern.vars()))
++                .collect(),
++            IExpr::Left(expr, _) => expr.fvars(),
++            IExpr::Right(expr, _) => expr.fvars(),
++        }
++    }
++}
++
++impl<'src> ILens<'src> {
++    /// Possibly contains duplicates. A list of free variables.
++    fn fvars(&self) -> Vec<usize> {
++        match self {
++            ILens::Var(n, _, _) => vec![*n],
++            ILens::Tuple(items, _) => items.iter().flat_map(|x| x.fvars()).collect(),
++            ILens::App(left, right, _) => left.fvars().into_iter().chain(right.fvars()).collect(),
++            ILens::Literal(_, _) => Vec::new(),
++        }
++    }
++
++    fn span(&self) -> Span {
++        match self {
++            ILens::Var(_, _, span) => span.clone(),
++            ILens::Tuple(_, span) => span.clone(),
++            ILens::App(_, _, span) => span.clone(),
++            ILens::Literal(_, span) => span.clone(),
++        }
++    }
++}
++
++/// Flow typing splits the context between a lens scrutinee `~u` and the body of the
++/// `let` or `case` that binds it (rules ~Let, ~(x)-E and ~(+)-E): the body may not mention
++/// any variable that the scrutinee mentions. `body_vars` are the free variables of the
++/// body(ies), already shifted out of the scope of the pattern variables.
++fn check_scrutinee_split<'src>(
++    errors: &mut Errors,
++    ctx: &Ctx<'src>,
++    scrutinee: &ILens<'src>,
++    body_vars: impl IntoIterator<Item = usize>,
++) {
++    let mut scrutinee_vars = scrutinee.fvars();
++    scrutinee_vars.sort();
++    scrutinee_vars.dedup();
++    let mut body_vars = body_vars.into_iter().collect::<Vec<_>>();
++    body_vars.sort();
++    body_vars.dedup();
++    for var in scrutinee_vars {
++        if body_vars.contains(&var) {
++            errors.push(Diagnostic::error(
++                ctx.vars[var].0.clone(),
++                "this variable is used in a '~' scrutinee, so it cannot also be used in the body \
++                 that the scrutinee's pattern scopes over"
++                    .to_owned(),
++            ));
++        }
++    }
++}
++
+ #[derive(Debug, Clone)]
+ pub enum Expr<'src> {
+     /// De Bruijn indexed.
+@@ -1073,6 +1246,18 @@
+ }
+ 
+ impl<'src> IPattern<'src> {
++    fn vars(&self) -> usize {
++        match self {
++            IPattern::Var(_, _, _) => 1,
++            IPattern::Literal(_, _) => 0,
++            IPattern::Tuple(pats, _) => pats.iter().map(|pat| pat.vars()).sum(),
++            IPattern::EmptyList(_) => 0,
++            IPattern::Cons(head, tail, _) => head.vars() + tail.vars(),
++            IPattern::Left(pat, _) => pat.vars(),
++            IPattern::Right(pat, _) => pat.vars(),
++        }
++    }
++
+     fn span(&self) -> Span {
+         match self {
+             IPattern::Var(_, _, span) => span.clone(),

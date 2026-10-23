@@ -1,0 +1,9 @@
+[package]
+name = "flow-typing-compiler-tests"
+version = "0.1.0"
+edition = "2024"
+
+# Only `logos::Span` is needed by the type checker and the translation, so a local stub
+# replaces the real crate and the tests build without network access.
+[dependencies]
+logos = { path = "logos-stub" }
