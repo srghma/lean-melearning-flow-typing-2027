@@ -148,6 +148,9 @@ theorem LinTy.strengthen {n : ℕ} {Γ Δ : FCtx n} {t : LinTm n} {A : PTy} :
   | .falseE h, i, hx => by
     simp only [LinTm.Occurs, Tm.Occurs] at hx
     exact .falseE (h.strengthen i hx)
+  | .falseELens h, i, hx => by
+    simp only [LinTm.Occurs, Tm.Occurs] at hx
+    exact .falseELens (h.strengthen i hx)
   | .withPair hs h₁ h₂ hs', i, hx => by
     simp only [LinTm.Occurs, not_or] at hx
     rcases hs.side i with h | h
@@ -252,6 +255,9 @@ theorem LensTy.strengthen {n : ℕ} {Γ Δ : FCtx n} {u : LensTm n} {A B : PTy} 
   | .falseE h, i, hx => by
     simp only [LensTm.Occurs, Tm.Occurs] at hx
     exact .falseE (h.strengthen i hx)
+  | .falseELens h, i, hx => by
+    simp only [LensTm.Occurs, Tm.Occurs] at hx
+    exact .falseELens (h.strengthen i hx)
 
 /-- Strengthening for terms `s ::= t | ~u`. -/
 theorem TmTy.strengthen {n : ℕ} {Γ Δ : FCtx n} {s : Tm n} {T : FTy} :

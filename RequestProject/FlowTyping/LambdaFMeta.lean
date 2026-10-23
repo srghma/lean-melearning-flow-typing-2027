@@ -70,6 +70,7 @@ theorem LinTy.absent_iff {n : ℕ} {Γ Δ : FCtx n} {t : LinTm n} {A : PTy} :
   | .caseLens hs h₁ h₂ _ hs', i => FCtx.split₂_absent hs hs' h₁.absent_iff
       (fun i => by simpa using h₂.absent_iff i.succ) i
   | .falseE h, i => h.absent_iff i
+  | .falseELens h, i => h.absent_iff i
   | .withPair hs _ _ hs', i => FCtx.split_dag_absent hs hs' i
   | .fst h, i => h.absent_iff i
   | .snd h, i => h.absent_iff i
@@ -124,6 +125,7 @@ theorem LensTy.absent_iff {n : ℕ} {Γ Δ : FCtx n} {u : LensTm n} {A B : PTy} 
   | .caseLens hs h₁ h₂ _ hs', i => FCtx.split₂_absent hs hs' h₁.absent_iff
       (fun i => by simpa using h₂.absent_iff i.succ) i
   | .falseE h, i => h.absent_iff i
+  | .falseELens h, i => h.absent_iff i
 
 /-- The input and output contexts of a judgement contain the same variables. -/
 theorem TmTy.absent_iff {n : ℕ} {Γ Δ : FCtx n} {s : Tm n} {T : FTy} :
@@ -245,6 +247,7 @@ theorem LinTy.frame {n : ℕ} {Γ Δ : FCtx n} {t : LinTm n} {A : PTy} :
       (hs'.overlay_left (hΘ.of_iff (FCtx.split₂_absent hs hs' h₁.absent_iff
         (fun i => by simpa using h₂.absent_iff i.succ))))
   | .falseE h, Θ, hΘ => .falseE (h.frame Θ hΘ)
+  | .falseELens h, Θ, hΘ => .falseELens (h.frame Θ hΘ)
   | .withPair hs h₁ h₂ hs', Θ, hΘ =>
     .withPair (hs.overlay_left hΘ) h₁ h₂
       (hs'.overlay_left (hΘ.of_iff (FCtx.split_dag_absent hs hs')))
@@ -314,6 +317,7 @@ theorem LensTy.frame {n : ℕ} {Γ Δ : FCtx n} {u : LensTm n} {A B : PTy} :
       (hs'.overlay_left (hΘ.of_iff (FCtx.split₂_absent hs hs' h₁.absent_iff
         (fun i => by simpa using h₂.absent_iff i.succ))))
   | .falseE h, Θ, hΘ => .falseE (h.frame Θ hΘ)
+  | .falseELens h, Θ, hΘ => .falseELens (h.frame Θ hΘ)
 
 /-- Framing for terms `s ::= t | ~u`. -/
 theorem TmTy.frame {n : ℕ} {Γ Δ : FCtx n} {s : Tm n} {T : FTy} :
@@ -479,6 +483,7 @@ theorem LinTy.unchanged {n : ℕ} {Γ Δ : FCtx n} {t : LinTm n} {A : PTy} :
     exact FCtx.split₂_eq hs hs' (h₁.unchanged i hx.1)
       (by simpa using h₂.unchanged i.succ hx.2.1)
   | .falseE h, i, hx => h.unchanged i hx
+  | .falseELens h, i, hx => h.unchanged i hx
   | .withPair hs h₁ _ hs', i, hx => by
     simp only [LinTm.Occurs, not_or] at hx
     exact FCtx.split_dag_eq hs hs' (by simpa using h₁.unchanged i hx.1)
@@ -543,6 +548,9 @@ theorem LensTy.unchanged {n : ℕ} {Γ Δ : FCtx n} {u : LensTm n} {A B : PTy} :
     exact FCtx.split₂_eq hs hs' (h₁.unchanged i hx.1)
       (by simpa using h₂.unchanged i.succ hx.2.1)
   | .falseE h, i, hx => by
+    simp only [LensTm.Occurs, Tm.Occurs] at hx
+    exact h.unchanged i hx
+  | .falseELens h, i, hx => by
     simp only [LensTm.Occurs, Tm.Occurs] at hx
     exact h.unchanged i hx
 

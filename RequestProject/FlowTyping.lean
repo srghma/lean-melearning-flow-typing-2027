@@ -8,3 +8,14 @@ public import RequestProject.FlowTyping.LambdaFMeta
 public import RequestProject.FlowTyping.LambdaFFrame
 public import RequestProject.FlowTyping.Embedding
 public import RequestProject.FlowTyping.Examples
+public import RequestProject.FlowTyping.Substitution
+public import RequestProject.FlowTyping.Semantics
+public import RequestProject.FlowTyping.LogicalRelation
+public import RequestProject.FlowTyping.Fundamental
+public import RequestProject.FlowTyping.Checker
+public import RequestProject.FlowTyping.LensCombinators
+public import RequestProject.FlowTyping.ContextIso
+public import RequestProject.FlowTyping.LensTranslation
+public import RequestProject.FlowTyping.AppendixB
+public import RequestProject.FlowTyping.Congruence
+public import RequestProject.FlowTyping.Category

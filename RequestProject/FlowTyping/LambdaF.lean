@@ -230,6 +230,9 @@ inductive LinTy : {n : ℕ} → FCtx n → LinTm n → PTy → FCtx n → Prop
   /-- `0-E` with a linear scrutinee -/
   | falseE {n : ℕ} {Γ₁ Γ₂ : FCtx n} {t B} :
       LinTy Γ₁ t .zero Γ₂ → LinTy Γ₁ (.falseE B (.lin t)) B Γ₂
+  /-- `~0-E` with a lens scrutinee -/
+  | falseELens {n : ℕ} {Γ₁ Γ₂ : FCtx n} {u B} :
+      LensTy Γ₁ u .zero .zero Γ₂ → LinTy Γ₁ (.falseE B (.lens u)) B Γ₂
   /-- `&-I` -/
   | withPair {n : ℕ} {Γ Γ₁ Γ₂ Δ : FCtx n} {t₁ t₂ A B} :
       Γ.Split Γ₁ Γ₂ → LinTy Γ₂ t₁ A Γ₂.dag → LinTy Γ₂ t₂ B Γ₂.dag → Δ.Split Γ₁ Γ₂.dag →
@@ -320,6 +323,9 @@ inductive LensTy : {n : ℕ} → FCtx n → LensTm n → PTy → PTy → FCtx n 
   /-- `0-E` with a linear scrutinee, producing a lens term -/
   | falseE {n : ℕ} {Γ₁ Γ₂ : FCtx n} {t C C'} :
       LinTy Γ₁ t .zero Γ₂ → LensTy Γ₁ (.falseE C (.lin t)) C C' Γ₂
+  /-- `~0-E` with a lens scrutinee, producing a lens term -/
+  | falseELens {n : ℕ} {Γ₁ Γ₂ : FCtx n} {u C C'} :
+      LensTy Γ₁ u .zero .zero Γ₂ → LensTy Γ₁ (.falseE C (.lens u)) C C' Γ₂
 
 /-- `TmTy Γ₁ s T Γ₂` is the abbreviated judgement `Γ₁ ⊢ s : T ⊣ Γ₂` for `s ::= t | ~u`,
 where `(Γ₁ ⊢ ~u : A/A' ⊣ Γ₂) ≔ (Γ₁ ⊢ u : A/A' ⊣ Γ₂)`. -/
