@@ -19,3 +19,4 @@ public import RequestProject.FlowTyping.LensTranslation
 public import RequestProject.FlowTyping.AppendixB
 public import RequestProject.FlowTyping.Congruence
 public import RequestProject.FlowTyping.Category
+public import RequestProject.FlowTyping.CompilerExamples
